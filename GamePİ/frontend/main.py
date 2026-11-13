@@ -1,3 +1,4 @@
+
 import sys
 import os
 import subprocess
@@ -6,191 +7,262 @@ import pygame
 pygame.init()
 pygame.joystick.init()
 
-# Gamepad Kontrolü
+# Ekran Boyutları ve Tam Ekran (Fullscreen) Ayarı
+WIDTH, HEIGHT = 1000, 700
+screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
+pygame.display.set_caption("GamePi Linux/Windows Edition - Retro Konsol")
+
+# Renk Paleti (Modern Koyu Tema)
+BG_COLOR = (15, 17, 23)
+PANEL_COLOR = (26, 29, 39)
+ACCENT_COLOR = (0, 230, 140)
+WARNING_COLOR = (255, 170, 50)
+TEXT_WHITE = (245, 245, 250)
+TEXT_GRAY = (145, 150, 170)
+
+font = pygame.font.SysFont("DejaVu Sans", 26)
+title_font = pygame.font.SysFont("DejaVu Sans", 38, bold=True)
+small_font = pygame.font.SysFont("DejaVu Sans", 18)
+
+# Gamepad Yönetimi (Dinamik / Sonradan Takma Desteği)
 joystick = None
-if pygame.joystick.get_count() > 0:
-    joystick = pygame.joystick.Joystick(0)
-    joystick.init()
-    print(f"[GAMEPAD BAĞLANDI]: {joystick.get_name()} - main.py:14")
-else:
-    print("[BİLGİ]: Gamepad algılanmadı, klavye kontrolleri aktif. - main.py:16")
 
-WIDTH, HEIGHT = 900, 650
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("TÜBİTAK Modüler Retro Konsol Arayüzü")
+def check_joystick():
+    global joystick
+    pygame.joystick.init()
+    if pygame.joystick.get_count() > 0:
+        if joystick is None:
+            joystick = pygame.joystick.Joystick(0)
+            joystick.init()
+    else:
+        joystick = None
 
-BG_COLOR = (18, 18, 24)
-PANEL_COLOR = (30, 30, 42)
-ACCENT_COLOR = (0, 220, 130)
-TEXT_WHITE = (240, 240, 245)
-TEXT_GRAY = (140, 140, 160)
+check_joystick()
 
-try:
-    font = pygame.font.SysFont("Arial", 28)
-    title_font = pygame.font.SysFont("Arial", 40, bold=True)
-    small_font = pygame.font.SysFont("Arial", 20)
-except:
-    font = pygame.font.Font(None, 32)
-    title_font = pygame.font.Font(None, 40)
-    small_font = pygame.font.Font(None, 24)
+# Klasörlerin Otomatik Oluşturulması
+REQUIRED_DIRS = [
+    "roms/chip8",
+    "roms/gameboy",
+    "roms/psp",
+    "cores/chip8"
+]
+for d in REQUIRED_DIRS:
+    os.makedirs(d, exist_ok=True)
 
-# Modüler Sistemler ve Emülatör Tanımları
+# Sistem Tanımları ve Emülatör Yolları
 systems = [
     {
-        "name": "CHIP-8 (Özel Motor)",
+        "name": "CHIP-8 (Dahili Motor)",
         "folder": "chip8",
         "ext": ".ch8",
-        "emulator": ["python", "cores/chip8/chip8.py"]
+        "type": "python",
+        "path": os.path.join("cores", "chip8", "chip8.py")
     },
     {
-        "name": "Game Boy",
+        "name": "Game Boy (mGBA)",
         "folder": "gameboy",
         "ext": ".gb",
-        "emulator": "mgba-qt" # Linux/Pi üzerinde mGBA arayüz komutu
+        "type": "exe",
+        "path": os.path.expanduser("~/mgba-10.4-linux-x64/mgba-qt")
     },
     {
-        "name": "PlayStation Portable (PSP)",
+        "name": "PlayStation Portable (PPSSPP)",
         "folder": "psp",
         "ext": ".iso",
-        "emulator": "ppssppsdl" # Linux/Pi üzerinde PSP emülatör komutu
+        "type": "exe",
+        "path": os.path.expanduser("~/PPSSPP/PPSSPPlinux")
     }
 ]
 
-def load_games_from_folders():
+def scan_games():
     for sys_info in systems:
         sys_info["games"] = []
         folder_path = os.path.join("roms", sys_info["folder"])
-        
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
-            continue
-            
-        for filename in os.listdir(folder_path):
-            if filename.endswith(sys_info["ext"]):
-                game_title = os.path.splitext(filename)[0].capitalize()
-                rom_full_path = os.path.join(folder_path, filename)
-                sys_info["games"].append({
-                    "title": game_title,
-                    "rom": rom_full_path
-                })
+        if os.path.exists(folder_path):
+            for filename in os.listdir(folder_path):
+                if filename.lower().endswith(sys_info["ext"]):
+                    sys_info["games"].append({
+                        "title": os.path.splitext(filename)[0],
+                        "rom": os.path.join(folder_path, filename)
+                    })
 
-load_games_from_folders()
+scan_games()
 
-current_system_index = 0
-current_game_index = 0
+current_sys = 0
+current_game = 0
+status_message = "Hazır. Bir oyun seçin."
+status_color = ACCENT_COLOR
 
-def launch_current_game():
-    system = systems[current_system_index]
+def launch_game():
+    global status_message, status_color, screen
+    system = systems[current_sys]
+    
     if not system["games"]:
-        print("Bu konsolda çalıştırılacak oyun bulunamadı! - main.py:85")
+        status_message = "Hata: Bu klasörde oyun bulunamadı!"
+        status_color = WARNING_COLOR
         return
-        
-    game = system["games"][current_game_index]
-    print(f"\n[BAŞLATILIYOR] Sistem: {system['name']} | Oyun: {game['title']} - main.py:89")
+
+    game = system["games"][current_game]
+    emu_path = system["path"]
+
+    if system["type"] != "python" and not os.path.exists(emu_path):
+        status_message = f"Eksik Emülatör: '{emu_path}' bulunamadı!"
+        status_color = WARNING_COLOR
+        return
+
+    status_message = f"Başlatılıyor: {game['title']}..."
+    status_color = ACCENT_COLOR
     
     try:
+        # Pygame ekranını simge durumuna küçült
         pygame.display.iconify()
         
-        # Emülatör çalıştırma komutu (Liste veya tekil komut desteği)
-        if isinstance(system["emulator"], list):
-            cmd = system["emulator"] + [game["rom"]]
-            subprocess.run(cmd)
+        # Emülatörü tam ekran başlat
+        if system["type"] == "python":
+            proc = subprocess.Popen([sys.executable, emu_path, game["rom"]])
+        elif "ppsspp" in emu_path.lower():
+            proc = subprocess.Popen([emu_path, "--fullscreen", game["rom"]])
+        elif "mgba" in emu_path.lower():
+            proc = subprocess.Popen([emu_path, game["rom"]])
         else:
-            # Sistemde emülatör yüklü değilse hata yakalama için subprocess
-            subprocess.run([system["emulator"], game["rom"]], shell=False)
+            proc = subprocess.Popen([emu_path, game["rom"]])
             
-        print("> Oyun sonlandırıldı, arayüze dönülüyor. - main.py:102")
-        pygame.display.set_mode((WIDTH, HEIGHT))
+        # Oyun oynanırken arka planda gamepad çıkış kombinasyonunu dinleyebiliriz
+        # veya kullanıcı emülatörü kapatana kadar bekleriz. 
+        # mGBA/PPSSPP açıkken doğrudan süreci sonlandırmak istersek proc.terminate() kullanılabilir.
+        proc.wait()
+            
+        # Emülatör kapandığında tam ekran arayüzü geri yükle
+        screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
+        pygame.event.clear()
+        status_message = "Arayüze dönüldü."
+        status_color = ACCENT_COLOR
     except Exception as e:
-        print(f"Hata: Emülatör başlatılamadı > {e} - main.py:105")
-        pygame.display.set_mode((WIDTH, HEIGHT))
+        screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
+        status_message = f"Başlatma hatası: {str(e)}"
+        status_color = WARNING_COLOR
 
 clock = pygame.time.Clock()
 running = True
 
 while running:
+    check_joystick()
+
     screen.fill(BG_COLOR)
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-            
+
+        elif event.type == pygame.JOYDEVICEADDED:
+            check_joystick()
+        elif event.type == pygame.JOYDEVICEREMOVED:
+            check_joystick()
+
         elif event.type == pygame.KEYDOWN:
-            system = systems[current_system_index]
+            sys_obj = systems[current_sys]
             if event.key == pygame.K_LEFT:
-                current_system_index = (current_system_index - 1) % len(systems)
-                current_game_index = 0 
+                current_sys = (current_sys - 1) % len(systems)
+                current_game = 0
             elif event.key == pygame.K_RIGHT:
-                current_system_index = (current_system_index + 1) % len(systems)
-                current_game_index = 0
-            elif event.key == pygame.K_UP:
-                if system["games"]:
-                    current_game_index = (current_game_index - 1) % len(system["games"])
-            elif event.key == pygame.K_DOWN:
-                if system["games"]:
-                    current_game_index = (current_game_index + 1) % len(system["games"])
+                current_sys = (current_sys + 1) % len(systems)
+                current_game = 0
+            elif event.key == pygame.K_UP and sys_obj["games"]:
+                current_game = (current_game - 1) % len(sys_obj["games"])
+            elif event.key == pygame.K_DOWN and sys_obj["games"]:
+                current_game = (current_game + 1) % len(sys_obj["games"])
             elif event.key == pygame.K_RETURN:
-                launch_current_game()
+                launch_game()
+            elif event.key == pygame.K_r:
+                scan_games()
+                status_message = "Oyun listesi yenilendi."
+                status_color = ACCENT_COLOR
             elif event.key == pygame.K_ESCAPE:
                 running = False
 
         elif event.type == pygame.JOYBUTTONDOWN:
-            system = systems[current_system_index]
-            if event.button == 0: # Gamepad 'A' veya 'X' tuşu
-                launch_current_game()
-                
+            # Standart Gamepad Tuş Eşlemesi:
+            # Button 0 (A Tuşu): Oyunu Başlat
+            if event.button == 0:  
+                launch_game()
+            # Örnek: Button 6 (Select) veya Button 8/9 gibi tuşlarla hızlı çıkış/kısayol eklenebilir.
+
         elif event.type == pygame.JOYHATMOTION:
-            hat_x, hat_y = event.value
-            system = systems[current_system_index]
-            
-            if hat_x == -1:
-                current_system_index = (current_system_index - 1) % len(systems)
-                current_game_index = 0
-            elif hat_x == 1:
-                current_system_index = (current_system_index + 1) % len(systems)
-                current_game_index = 0
-            elif hat_y == 1:
-                if system["games"]:
-                    current_game_index = (current_game_index - 1) % len(system["games"])
-            elif hat_y == -1:
-                if system["games"]:
-                    current_game_index = (current_game_index + 1) % len(system["games"])
+            hx, hy = event.value
+            sys_obj = systems[current_sys]
+            if hx == -1:
+                current_sys = (current_sys - 1) % len(systems)
+                current_game = 0
+            elif hx == 1:
+                current_sys = (current_sys + 1) % len(systems)
+                current_game = 0
+            elif hy == 1 and sys_obj["games"]:
+                current_game = (current_game - 1) % len(sys_obj["games"])
+            elif hy == -1 and sys_obj["games"]:
+                current_game = (current_game + 1) % len(sys_obj["games"])
 
-    # Görsel Arayüz Çizimleri
-    header_rect = pygame.Rect(0, 0, WIDTH, 90)
-    pygame.draw.rect(screen, PANEL_COLOR, header_rect)
-    
-    active_system = systems[current_system_index]
-    sys_title = title_font.render(f"<  {active_system['name']}  >", True, ACCENT_COLOR)
-    screen.blit(sys_title, (WIDTH // 2 - sys_title.get_width() // 2, 25))
+        elif event.type == pygame.JOYAXISMOTION:
+            sys_obj = systems[current_sys]
+            if event.axis == 0:
+                if event.value < -0.7:
+                    current_sys = (current_sys - 1) % len(systems)
+                    current_game = 0
+                    pygame.time.delay(200)
+                elif event.value > 0.7:
+                    current_sys = (current_sys + 1) % len(systems)
+                    current_game = 0
+                    pygame.time.delay(200)
+            elif event.axis == 1 and sys_obj["games"]:
+                if event.value < -0.7:
+                    current_game = (current_game - 1) % len(sys_obj["games"])
+                    pygame.time.delay(150)
+                elif event.value > 0.7:
+                    current_game = (current_game + 1) % len(sys_obj["games"])
+                    pygame.time.delay(150)
 
-    start_y = 150
-    games_list = active_system["games"]
-    
-    if games_list:
-        for i, game in enumerate(games_list):
-            item_rect = pygame.Rect(80, start_y + (i * 75), WIDTH - 160, 60)
-            if i == current_game_index:
-                pygame.draw.rect(screen, PANEL_COLOR, item_rect, border_radius=10)
-                pygame.draw.rect(screen, ACCENT_COLOR, item_rect, 2, border_radius=10)
-                text_color = TEXT_WHITE
+    # Üst Bar (Konsol Seçici)
+    pygame.draw.rect(screen, PANEL_COLOR, (0, 0, WIDTH, 95))
+    active_sys = systems[current_sys]
+    title_surf = title_font.render(f"◀   {active_sys['name']}   ▶", True, ACCENT_COLOR)
+    screen.blit(title_surf, (WIDTH // 2 - title_surf.get_width() // 2, 22))
+
+    # Emülatör Kurulum Durum Göstergesi
+    emu_exists = (active_sys["type"] == "python") or os.path.exists(active_sys["path"])
+    emu_status_txt = "Emülatör Durumu: KURULU" if emu_exists else f"Emülatör Eksik ({active_sys['path']})"
+    emu_status_col = ACCENT_COLOR if emu_exists else WARNING_COLOR
+    emu_surf = small_font.render(emu_status_txt, True, emu_status_col)
+    screen.blit(emu_surf, (WIDTH // 2 - emu_surf.get_width() // 2, 108))
+
+    # Oyun Listesi
+    start_y = 155
+    games = active_sys["games"]
+    if games:
+        for i, g in enumerate(games):
+            rect = pygame.Rect(100, start_y + i * 68, WIDTH - 200, 56)
+            if i == current_game:
+                pygame.draw.rect(screen, PANEL_COLOR, rect, border_radius=8)
+                pygame.draw.rect(screen, ACCENT_COLOR, rect, 2, border_radius=8)
+                col = TEXT_WHITE
             else:
-                text_color = TEXT_GRAY
-
-            game_surface = font.render(game["title"], True, text_color)
-            screen.blit(game_surface, (item_rect.x + 20, item_rect.y + 15))
+                col = TEXT_GRAY
+            g_surf = font.render(g["title"], True, col)
+            screen.blit(g_surf, (rect.x + 20, rect.y + 10))
     else:
-        no_game_text = font.render(f"roms/{active_system['folder']} klasöründe oyun bulunamadı.", True, TEXT_GRAY)
-        screen.blit(no_game_text, (WIDTH // 2 - no_game_text.get_width() // 2, 250))
-        
-        info_text = small_font.render("Oyun dosyasını ilgili klasörlere atıp arayüzü yeniden başlatın.", True, (100, 100, 120))
-        screen.blit(info_text, (WIDTH // 2 - info_text.get_width() // 2, 300))
+        empty_surf = font.render(f"'roms/{active_sys['folder']}' klasörüne {active_sys['ext']} dosyası atın.", True, TEXT_GRAY)
+        screen.blit(empty_surf, (WIDTH // 2 - empty_surf.get_width() // 2, 280))
 
-    footer_rect = pygame.Rect(0, HEIGHT - 50, WIDTH, 50)
-    pygame.draw.rect(screen, PANEL_COLOR, footer_rect)
+    # Alt Bilgi ve Durum Çubuğu
+    pygame.draw.rect(screen, PANEL_COLOR, (0, HEIGHT - 75, WIDTH, 75))
     
-    footer_text = small_font.render("[Klavye / Kol] Konsol Değiştir | Oyun Seç | [ENTER / Kol Tuşu] Oyna", True, TEXT_GRAY)
-    screen.blit(footer_text, (WIDTH // 2 - footer_text.get_width() // 2, HEIGHT - 35))
+    st_surf = small_font.render(status_message, True, status_color)
+    screen.blit(st_surf, (30, HEIGHT - 62))
+
+    gp_text = f"Gamepad: {joystick.get_name()[:25]}" if joystick else "Gamepad: Bağlı Değil"
+    gp_surf = small_font.render(gp_text, True, TEXT_GRAY)
+    screen.blit(gp_surf, (WIDTH - gp_surf.get_width() - 30, HEIGHT - 62))
+
+    help_surf = small_font.render("[D-Pad / Analog] Gezin  |  [A Tuşu] Seç/Başlat  |  [R] Yenile", True, TEXT_GRAY)
+    screen.blit(help_surf, (WIDTH // 2 - help_surf.get_width() // 2, HEIGHT - 32))
 
     pygame.display.flip()
     clock.tick(60)
