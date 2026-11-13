@@ -1,32 +1,85 @@
 #!/bin/bash
 
-# TÜBİTAK Modüler Retro Konsol (GamePi) - Otomatik Kurulum Betiği
-# Bu betik Linux / Raspberry Pi OS tabanlı sistemlerde çalıştırılmak üzere hazırlanmıştır.
 
-echo "=================================================="
-echo "  GamePi Otomatik Kurulum ve Yapılandırma Başlıyor  "
-echo "=================================================="
 
-# 1. Adım: Sistem paket yöneticisini güncelle
-echo "[1/4] Sistem paketleri güncelleniyor..."
-sudo apt update && sudo apt upgrade -y
+echo "=== GamePi Evrensel Otomatik Kurulum Başlatılıyor ==="
 
-# 2. Adım: Python, Pip ve Pygame kütüphanelerini kur
-echo "[2/4] Python ve Pygame bağımlılıkları yükleniyor..."
-sudo apt install -y python3 python3-pip python3-pygame
 
-# 3. Adım: Emülatörleri (mGBA ve PPSSPP) kur
-echo "[3/4] Konsol emülatörleri (mGBA, PPSSPP) indiriliyor..."
-sudo apt install -y mgba-qt ppsspp
 
-# 4. Adım: ROM ve Sistem Klasör yapısını oluştur
-echo "[4/4] Proje dizinleri ve ROM klasörleri hazırlanıyor..."
-mkdir -p roms/chip8
-mkdir -p roms/gameboy
-mkdir -p roms/psp
-mkdir -p cores/chip8
+# 1. Bozuk PPA kalıntılarını temizle ve sistemi güncelle
 
-echo "=================================================="
-echo "  KURULUM TAMAMLANDI!                             "
-echo "  Konsolu çalıştırmak için: python3 frontend/main.py"
-echo "=================================================="
+echo "[1/4] Paket kaynakları güncelleniyor..."
+
+sudo rm -f /etc/apt/sources.list.d/*ppsspp*
+
+sudo apt update
+
+
+
+# 2. Gerekli temel araçları ve Pygame'i kur
+
+echo "[2/4] Sistem paketleri ve Pygame kuruluyor..."
+
+sudo apt install -y wget tar xz-utils python3-pygame libsdl2-2.0-0
+
+
+
+# 3. mGBA (Game Boy) Kurulumu (Hem Pi hem Ubuntu deposunda mevcut)
+
+echo "[3/4] mGBA (Game Boy) kuruluyor..."
+
+sudo apt install -y mgba-qt
+
+if command -v mgba-qt &> /dev/null; then
+
+    mkdir -p ~/mgba-10.4-linux-x64
+
+    ln -sf $(which mgba-qt) ~/mgba-10.4-linux-x64/mgba-qt
+
+    echo "-> mGBA başarıyla bağlandı."
+
+fi
+
+
+
+# 4. PPSSPP (PSP) Kurulumu (Mimariye Göre Otomatik Seçim)
+
+echo "[4/4] PPSSPP (PSP) kuruluyor..."
+
+mkdir -p ~/PPSSPP
+
+rm -f ~/PPSSPP/PPSSPPlinux
+
+
+
+# Önce standart apt deposundan dene (Raspberry Pi OS'ta direkt buradan kurulur)
+
+if sudo apt install -y ppsspp 2>/dev/null; then
+
+    EMU_BIN=$(which ppsspp || which PPSSPPSDL)
+
+    printf "#!/bin/bash\nexec $EMU_BIN \"\$@\"\n" > ~/PPSSPP/PPSSPPlinux
+
+    chmod +x ~/PPSSPP/PPSSPPlinux
+
+    echo "-> PPSSPP (APT) başarıyla kuruldu."
+
+else
+
+    # APT'de yoksa (Ubuntu gibi) Snap üzerinden kur ve wrapper oluştur
+
+    echo "-> APT deposunda bulunamadı, Snap üzerinden kuruluyor..."
+
+    sudo snap install ppsspp-emu
+
+    printf '#!/bin/bash\nexec /snap/bin/ppsspp-emu.ppsspp-sdl "$@"\n' > ~/PPSSPP/PPSSPPlinux
+
+    chmod +x ~/PPSSPP/PPSSPPlinux
+
+    echo "-> PPSSPP (Snap) başarıyla kuruldu."
+
+fi
+
+
+
+echo "=== Kurulum Tamamlandı! 'python3 frontend/main.py' ile başlatabilirsiniz. ===" 
